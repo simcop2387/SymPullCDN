@@ -17,7 +17,7 @@ import re
 #  1. Origin                                                                   #
 #     The origin server will be mirrored by this instance of SymPullCDN        #
 #     configure a full http:// path with a FQDN, trailing slash included       #
-origin = "http://replace*me/"                                                  #
+origin = "http://uncached.simcop2387.info/"                                    #
 #                                                                              #
 #  2. Cachable Codes                                                           #
 #     This is a list of HTTP Status Codes that will be cached when sent from   #
