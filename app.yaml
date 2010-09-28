@@ -1,5 +1,5 @@
-application: SymPullCDN-simcop2387
-version: 1
+application: simcop2387
+version: 2
 runtime: python
 api_version: 1
 
