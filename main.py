@@ -45,6 +45,16 @@ class Entity(db.Model):
     content      = db.BlobProperty(required=True)
 
 class MainHandler(webapp.RequestHandler):
+    def post(self):
+        #We've got a post request, do not do any caching, just send things along normally
+        request_entity = fetch( origin + self.request.path, payload=self.request.body, method="POST", headers=self.request.headers, follow_redirects=False )
+        
+        for key in iter(request_entity.headers):
+            self.response.headers[key] = request_entity.headers[key]
+        self.response.set_status(request_entity.status)
+        self.response.headers["X-SymPullCDN-Status"] = "Hit[200]"
+        self.response.out.write(request_entity.content)
+
     def get(self):
 
        ############################################################################################
