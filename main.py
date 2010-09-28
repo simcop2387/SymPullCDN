@@ -4,7 +4,7 @@
 from google.appengine.ext import db
 from google.appengine.ext import webapp
 from google.appengine.ext.webapp import util
-from google.appengine.api.urlfetch import fetch
+from google.appengine.api.urlfetch import fetch, POST, GET
 import datetime
 import models
 import hutils
@@ -17,7 +17,8 @@ import re
 #  1. Origin                                                                   #
 #     The origin server will be mirrored by this instance of SymPullCDN        #
 #     configure a full http:// path with a FQDN, trailing slash included       #
-origin = "http://replace*me/"                                                  #
+#origin = "http://replace*me/"                                                  #
+origin = "http://uncached.simcop2387.info/"
 #                                                                              #
 #  2. Cachable Codes                                                           #
 #     This is a list of HTTP Status Codes that will be cached when sent from   #
@@ -29,9 +30,14 @@ cache_codes = ( 200, )                                                         #
 #                                                                              #
 ################################################################################
 
+blacklist = [ "^/wp-admin/", "^/wp-login.php" ]
 
+################################################################################
+# THERE IS NOTHING TO EDIT BELOW THIS COMMENT!                                 #
+################################################################################
 
-
+#pre-compile the blacklist regular expressions, that way the objects will stick around
+blacklistre = map((lambda x: re.compile(x)), blacklist)
 
 # Compiled Regular Expressions
 no_cache_regex = re.compile( "(no-cache|no-store|private)", re.IGNORECASE )
@@ -47,7 +53,7 @@ class Entity(db.Model):
 class MainHandler(webapp.RequestHandler):
     def post(self):
         #We've got a post request, do not do any caching, just send things along normally
-        request_entity = fetch( origin + self.request.path, payload=self.request.body, method="POST", headers=self.request.headers, follow_redirects=False )
+        request_entity = fetch( origin + self.request.path, payload=self.request.body, method=POST, headers=self.request.headers, follow_redirects=False )
         
         for key in iter(request_entity.headers):
             self.response.headers[key] = request_entity.headers[key]
@@ -57,67 +63,76 @@ class MainHandler(webapp.RequestHandler):
 
     def get(self):
 
-       ############################################################################################
-       #                                                                                          #
-       #        Getting entity from cache, Passing to the user, possibly revalidating it          #  
-       #                                                                                          #
-       ############################################################################################
+        ############################################################################################
+        #                                                                                          #
+        #        Getting entity from cache, Passing to the user, possibly revalidating it          #  
+        #                                                                                          #
+        ############################################################################################
+        nocache = False;
+        
+        for i in range(len(blacklistre)):
+            if blacklistre[i].match(self.request.path):
+                nocache = True
+                self.response.headers["X-SymPullCDN-StatusAlt"] = "Uncachable"
+                break
        
-        entity = Entity.all().filter("uri =", self.request.path).get()
-        if entity:
-            # Revalidate if required.  Note, revalidation here updates the
-            # request /after/ this one for the given entity.
-            if entity.expires <= datetime.datetime.now():
-                request_entity = fetch( origin + self.request.path, method="GET", 
-                        headers={"If-Modified-Since" : entity.LastModified} )
-                
-                # If 304 JUST update the headers.
-                if request_entity.status_code == 304:
-                    headers      = dict(request_entity.headers)
-                    entity.expires = hutils.get_expires( request_entity.headers )
-                    entity.LastModified = hutils.get_header( "Last-Modified", request_entity.headers )
-                    entity.save()
-                # If 200, update the content too.
-                elif request_entity.status_code == 200:
-                    headers      = dict(request_entity.headers)
-                    entity.expires = hutils.get_expires( request_entity.headers )
-                    entity.LastModified = hutils.get_header( "Last-Modified", request_entity.headers )
-                    entity.content = request_entity.content
-                    entity.save()
-                #Revalidation failed, send the entity stale and delete from the cache.
-                else:
-                    for key in iter(entity.headers):
-                        self.response.headers[key] = entity.headers[key]
-                    self.response.set_status(entity.status)
-                    self.response.headers["X-SymPullCDN-Status"] = "Hit[EVALIDFAIL]"
-                    self.response.out.write(entity.content)
-                    entity.delete()
-                    return True
+        if not nocache:
+            entity = Entity.all().filter("uri =", self.request.path).get()
             
-            # See if we can send a 304
-            if "If-Modified-Since" in self.request.headers:
-                if self.request.headers["If-Modified-Since"] == entity.LastModified:
-                    for key in iter(entity.headers):
-                        self.response.headers[key] = entity.headers[key]
-                    self.response.set_status(304)
-                    self.response.headers["X-SymPullCDN-Status"] = "Hit[304]"
-                    self.response.out.write(None)
-                    return True
-
-            for key in iter(entity.headers):
-                self.response.headers[key] = entity.headers[key]
-            self.response.set_status(entity.status)
-            self.response.headers["X-SymPullCDN-Status"] = "Hit[200]"
-            self.response.out.write(entity.content)
-            return True
+            if entity:
+                # Revalidate if required.  Note, revalidation here updates the
+                # request /after/ this one for the given entity.
+                if entity.expires <= datetime.datetime.now():
+                    request_entity = fetch( origin + self.request.path, method=GET, 
+                            headers={"If-Modified-Since" : entity.LastModified} )
+                    
+                    # If 304 JUST update the headers.
+                    if request_entity.status_code == 304:
+                        headers = dict(request_entity.headers)
+                        entity.expires = hutils.get_expires( request_entity.headers )
+                        entity.LastModified = hutils.get_header( "Last-Modified", request_entity.headers )
+                        entity.save()
+                    # If 200, update the content too.
+                    elif request_entity.status_code == 200:
+                        headers      = dict(request_entity.headers)
+                        entity.expires = hutils.get_expires( request_entity.headers )
+                        entity.LastModified = hutils.get_header( "Last-Modified", request_entity.headers )
+                        entity.content = request_entity.content
+                        entity.save()
+                    #Revalidation failed, send the entity stale and delete from the cache.
+                    else:
+                        for key in iter(entity.headers):
+                            self.response.headers[key] = entity.headers[key]
+                        self.response.set_status(entity.status)
+                        self.response.headers["X-SymPullCDN-Status"] = "Hit[EVALIDFAIL]"
+                        self.response.out.write(entity.content)
+                        entity.delete()
+                        return True
+                
+                # See if we can send a 304
+                if "If-Modified-Since" in self.request.headers:
+                    if self.request.headers["If-Modified-Since"] == entity.LastModified:
+                        for key in iter(entity.headers):
+                            self.response.headers[key] = entity.headers[key]
+                        self.response.set_status(304)
+                        self.response.headers["X-SymPullCDN-Status"] = "Hit[304]"
+                        self.response.out.write(None)
+                        return True
+    
+                for key in iter(entity.headers):
+                    self.response.headers[key] = entity.headers[key]
+                self.response.set_status(entity.status)
+                self.response.headers["X-SymPullCDN-Status"] = "Hit[200]"
+                self.response.out.write(entity.content)
+                return True
        
-       ############################################################################################
-       #                                                                                          #
-       #             Fetching The Entity, Passing it to the user, possibly storing it             #  
-       #                                                                                          #
-       ############################################################################################
+        ############################################################################################
+        #                                                                                          #
+        #             Fetching The Entity, Passing it to the user, possibly storing it             #  
+        #                                                                                          #
+        ############################################################################################
        
-        request_entity = fetch( origin + self.request.path, method="GET", payload=None )
+        request_entity = fetch( origin + self.request.path, method=GET, payload=None )
         
         # Respect no-cache and private
         if "Cache-Control" in request_entity.headers:
@@ -138,13 +153,14 @@ class MainHandler(webapp.RequestHandler):
             return True
         
         # Set up data to store.
-        entity = Entity(
-            uri          = self.request.path,
-            headers      = dict(request_entity.headers),
-            expires      = hutils.get_expires( request_entity.headers ),
-            LastModified = hutils.get_header( "Last-Modified", request_entity.headers ),
-            status       = request_entity.status_code,
-            content      = request_entity.content).save()
+        if not nocache:
+            entity = Entity(
+                uri          = self.request.path,
+                headers      = dict(request_entity.headers),
+                expires      = hutils.get_expires( request_entity.headers ),
+                LastModified = hutils.get_header( "Last-Modified", request_entity.headers ),
+                status       = request_entity.status_code,
+                content      = request_entity.content).save()
 
         for key in iter(request_entity.headers):
             self.response.headers[key] = request_entity.headers[key]
