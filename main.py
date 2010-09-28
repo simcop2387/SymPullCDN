@@ -57,8 +57,8 @@ class MainHandler(webapp.RequestHandler):
         
         for key in iter(request_entity.headers):
             self.response.headers[key] = request_entity.headers[key]
-        self.response.set_status(request_entity.status)
-        self.response.headers["X-SymPullCDN-Status"] = "Hit[200]"
+        self.response.set_status(request_entity.status_code)
+        self.response.headers["X-SymPullCDN-Status"] = "Uncachable"
         self.response.out.write(request_entity.content)
 
     def get(self):
@@ -131,8 +131,12 @@ class MainHandler(webapp.RequestHandler):
         #             Fetching The Entity, Passing it to the user, possibly storing it             #  
         #                                                                                          #
         ############################################################################################
-       
-        request_entity = fetch( origin + self.request.path, method=GET, payload=None )
+
+        # if we don't cache the request on purpose, then we can go ahead and send cookies!       
+        if nocache:
+            request_entity = fetch( origin + self.request.path, method=GET, payload=None, headers=self.request.headers )
+        else:
+            request_entity = fetch( origin + self.request.path, method=GET, payload=None )
         
         # Respect no-cache and private
         if "Cache-Control" in request_entity.headers:
@@ -153,6 +157,7 @@ class MainHandler(webapp.RequestHandler):
             return True
         
         # Set up data to store.
+        # do not even attempt to do so if its in a nocache path
         if not nocache:
             entity = Entity(
                 uri          = self.request.path,
